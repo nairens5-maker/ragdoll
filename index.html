@@ -15,23 +15,47 @@ header,nav{flex:none;display:flex;gap:8px;align-items:center;padding-block:8px;p
 header{justify-content:space-between;font-variant-numeric:tabular-nums}
 #wrap{flex:1;min-height:360px;position:relative}
 canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
-button{flex:1;min-width:0;min-height:44px;border:0;border-radius:8px;background:var(--panel);color:var(--fg);font:inherit;touch-action:manipulation}
+nav{flex-wrap:wrap}
+nav button{font-size:12px}
+button{flex:1 0 22%;padding:0 2px;min-width:0;min-height:44px;border:0;border-radius:8px;background:var(--panel);color:var(--fg);font:inherit;touch-action:manipulation}
 header button{flex:0 0 auto;padding:0 14px}
 button[aria-pressed="true"]{background:var(--blood)}
 button:focus-visible{outline:2px solid var(--fg)}
 </style>
-<header><span>Урон: <b id="score">0</b></span><button id="reset">Заново</button></header>
+<header><span>Урон: <b id="score">0</b><br>Рекорд: <b id="best">0</b></span><button id="snd" aria-pressed="false">Звук: вкл</button><button id="reset">Заново</button></header>
 <div id="wrap"><canvas id="c" aria-label="Игровое поле с манекеном"></canvas></div>
 <nav>
 <button data-t="hand" aria-pressed="true">Рука</button>
 <button data-t="saw" aria-pressed="false">Пила</button>
 <button data-t="gun" aria-pressed="false">Пушка</button>
 <button data-t="bomb" aria-pressed="false">Бомба</button>
+<button data-t="hammer" aria-pressed="false">Молот</button>
+<button id="spikes" aria-pressed="false">Шипы</button>
+<button id="blade" aria-pressed="false">Циркулярка</button>
+<button id="grav" aria-pressed="false">Невесомость</button>
 </nav>
 <script>
 const cv=document.getElementById('c'),g=cv.getContext('2d'),stain=document.createElement('canvas'),sg=stain.getContext('2d');
 let W=0,H=0,D=1,P=[],S=[],drops=[],bombs=[],flashes=[],score=0,shake=0,tool='hand';
 const grabs=new Map();
+let spikes=false,blade=false,zero=false,spin=0,mute=false,AC=null,noise=null,best=0;const played={};
+try{best=+localStorage.getItem('ragdollBest')||0}catch(_){}
+function audio(){try{if(!AC){AC=new (window.AudioContext||window.webkitAudioContext)();noise=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);const d=noise.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}if(AC.state!=='running')AC.resume()}catch(_){}}
+for(const n of ['pointerdown','touchend','click'])addEventListener(n,audio,true);
+// name: [noise filter Hz, tone from Hz, tone to Hz, seconds, volume]
+const SFX={hit:[500,150,50,.18,.5],cut:[3500,500,120,.2,.4],gun:[2500,200,40,.15,.6],boom:[300,90,25,.7,.9],hammer:[700,110,35,.3,.8],drop:[0,700,300,.12,.2]};
+function sfx(n){
+ if(mute||!AC)return;const t=AC.currentTime;if(t-(played[n]||0)<.07)return;played[n]=t;
+ const [hz,f0,f1,len,vol]=SFX[n];
+ const out=(src)=>{const v=AC.createGain();v.gain.setValueAtTime(vol,t);v.gain.exponentialRampToValueAtTime(.001,t+len);src.connect(v);v.connect(AC.destination);src.start(t);src.stop(t+len)};
+ const o=AC.createOscillator();o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(f1,t+len);out(o);
+ if(hz){const b=AC.createBufferSource();b.buffer=noise;const q=AC.createBiquadFilter();q.type='lowpass';q.frequency.value=hz;b.connect(q);out({connect:x=>q.connect(x),start:a=>b.start(a),stop:a=>b.stop(a)})}
+}
+const saw=()=>({x:W/2+Math.sin(spin*.12)*W*.32,y:H*.68,r:30});
+function hammer(x,y){
+ sfx('hammer');flashes.push({x,y,r:45,t:8});shake=10;
+ for(const p of P){const d=Math.hypot(p.x-x,p.y-y);if(d<75){p.py-=18*(1-d/90);p.px+=(Math.random()-.5)*10;p.cd=0;hurt(p,18)}}
+}
 function size(){const r=cv.getBoundingClientRect();W=r.width;H=r.height;D=Math.min(devicePixelRatio||1,2);for(const c of [cv,stain]){c.width=W*D;c.height=H*D}g.setTransform(D,0,0,D,0,0);sg.setTransform(D,0,0,D,0,0)}
 function reset(){
  P=[];S=[];drops=[];bombs=[];flashes=[];score=0;grabs.clear();sg.clearRect(0,0,W,H);
@@ -51,12 +75,12 @@ function reset(){
  P[0].head=true;
  hud();
 }
-function hud(){document.getElementById('score').textContent=Math.round(score)}
+function hud(){if(score>best){best=score;try{localStorage.setItem('ragdollBest',Math.round(best))}catch(_){}}document.getElementById('score').textContent=Math.round(score);document.getElementById('best').textContent=Math.round(best)}
 function bleed(x,y,n,vx=0,vy=0,sp=5){for(let i=0;i<n&&drops.length<700;i++){const a=Math.random()*6.283,v=Math.random()*sp;drops.push({x,y,vx:vx+Math.cos(a)*v,vy:vy+Math.sin(a)*v-1,r:1.5+Math.random()*3})}}
 function splat(x,y,r){sg.fillStyle='rgba(150,8,18,.75)';sg.beginPath();sg.arc(x,y,r,0,6.283);sg.fill()}
-function hurt(p,f){score+=f;bleed(p.x,p.y,Math.min(40,f|0),0,0,Math.min(9,f/3));splat(p.x,p.y,Math.min(14,f/3));shake=Math.min(12,shake+f/5);if(navigator.vibrate)navigator.vibrate(15);hud()}
+function hurt(p,f){sfx('hit');score+=f;bleed(p.x,p.y,Math.min(40,f|0),0,0,Math.min(9,f/3));splat(p.x,p.y,Math.min(14,f/3));shake=Math.min(12,shake+f/5);if(navigator.vibrate)navigator.vibrate(15);hud()}
 function sever(s,end){
- if(s.cut)return;s.cut=true;
+ if(s.cut)return;s.cut=true;sfx('cut');
  // stump: the bone stays on one end, a new point takes its other end
  const o=s[end],q={x:o.x,y:o.y,px:o.px+(Math.random()-.5)*6,py:o.py+3,r:s.w/2,cd:30,spurt:150};
  s[end]=q;P.push(q);o.spurt=150;
@@ -68,11 +92,12 @@ function crosses(a,b,c,d){const o=(p,q,r)=>Math.sign((q.x-p.x)*(r.y-p.y)-(q.y-p.
 function slash(a,b){for(const s of S.slice())if(s.col&&!s.cut&&crosses(a,b,s.a,s.b)){
  // choose the end that is not already loose, so the limb really comes off
  const used=e=>S.filter(o=>o.col&&(o.a===s[e]||o.b===s[e])).length;
- const ea=used('a'),eb=used('b');if(ea<2&&eb<2){s.cut=true;hurt(s.a,20)}else sever(s,ea>=eb?'a':'b')}}
-function shoot(x,y){flashes.push({x,y,r:14,t:6});for(const s of S)if(s.col&&segDist(x,y,s.a.x,s.a.y,s.b.x,s.b.y)<s.w/2+10){
+ const ea=used('a'),eb=used('b');if(ea<2&&eb<2){s.cut=true;sfx('cut');hurt(s.a,20)}else sever(s,ea>=eb?'a':'b')}}
+function shoot(x,y){sfx('gun');flashes.push({x,y,r:14,t:6});for(const s of S)if(s.col&&segDist(x,y,s.a.x,s.a.y,s.b.x,s.b.y)<s.w/2+10){
  for(const p of [s.a,s.b]){p.px-=(Math.random()-.5)*8;p.py+=5}
  bleed(x,y,30,0,-2,6);splat(x,y,7);s.a.spurt=Math.max(s.a.spurt||0,40);score+=15;shake=6;hud();return}}
 function boom(x,y){
+ sfx('boom');
  flashes.push({x,y,r:110,t:14});shake=18;
  for(const p of P){const dx=p.x-x,dy=p.y-y,d=Math.hypot(dx,dy)||1;if(d<170){const f=(1-d/170)*28;p.px-=dx/d*f;p.py-=dy/d*f;p.cd=0}}
  for(const s of S.slice())if(s.col&&!s.cut&&segDist(x,y,s.a.x,s.a.y,s.b.x,s.b.y)<65&&Math.random()<.7)sever(s,Math.random()<.5?'a':'b');
@@ -80,9 +105,14 @@ function boom(x,y){
 function step(){
  const held=new Set([...grabs.values()].map(v=>v.p).filter(Boolean));
  for(const p of P){
-  const vx=(p.x-p.px)*.995,vy=(p.y-p.py)*.995;p.px=p.x;p.py=p.y;p.x+=vx;p.y+=vy+.45;
+  const vx=(p.x-p.px)*.995,vy=(p.y-p.py)*.995;p.px=p.x;p.py=p.y;p.x+=vx;p.y+=vy+(zero?0:.45);
+  if(spikes&&!p.cd&&p.y>H-26-p.r){p.cd=45;p.py=p.y+9;p.spurt=40;hurt(p,14)}
   if(p.cd>0)p.cd--;
   if(p.spurt>0){p.spurt--;if(p.spurt%3===0)bleed(p.x,p.y,2,vx*.5,vy*.5-1,3)}
+ }
+ if(blade){spin++;const c=saw();
+  for(const s of S.slice())if(s.col&&!s.cut&&!(s.safe>spin)&&segDist(c.x,c.y,s.a.x,s.a.y,s.b.x,s.b.y)<c.r){const m={x:(s.a.x+s.b.x)/2,y:(s.a.y+s.b.y)/2};s.safe=spin+60;
+   slash({x:m.x-(s.b.y-s.a.y),y:m.y+(s.b.x-s.a.x)},{x:m.x+(s.b.y-s.a.y),y:m.y-(s.b.x-s.a.x)});break}
  }
  const hits=new Map();
  for(let i=0;i<8;i++){
@@ -100,7 +130,7 @@ function step(){
   }
  }
  for(const [p,v] of hits)if(!held.has(p)){p.cd=20;hurt(p,(v-9)*(p.head?3:2))}
- for(const d of drops){d.vy+=.35;d.x+=d.vx;d.y+=d.vy;if(d.x<0||d.x>W||d.y>H-2){splat(Math.max(0,Math.min(W,d.x)),Math.min(H-2,d.y),d.r*1.4);d.dead=true}}
+ for(const d of drops){d.vy+=.35;d.x+=d.vx;d.y+=d.vy;if(d.x<0||d.x>W||d.y>H-2){splat(Math.max(0,Math.min(W,d.x)),Math.min(H-2,d.y),d.r*1.4);d.dead=true;if(Math.random()<.08)sfx('drop')}}
  drops=drops.filter(d=>!d.dead);
  for(const b of bombs){b.vy+=.45;b.y=Math.min(H-12,b.y+b.vy);if(--b.t<=0)boom(b.x,b.y)}
  bombs=bombs.filter(b=>b.t>0);
@@ -112,6 +142,7 @@ function line(a,b,w,c){g.strokeStyle=c;g.lineWidth=w;g.lineCap='round';g.beginPa
 function draw(){
  g.clearRect(0,0,W,H);g.save();g.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
  g.drawImage(stain,0,0,W,H);
+ if(spikes){g.fillStyle='#aab2bd';for(let x=0;x<W;x+=24){g.beginPath();g.moveTo(x,H);g.lineTo(x+12,H-26);g.lineTo(x+24,H);g.fill()}}
  for(const s of S)if(s.col)line(s.a,s.b,s.w,s.col);
  for(const p of P){
   if(p.spurt!==undefined)circle(p.x,p.y,Math.max(3,p.r*.8),'#8c0b14');
@@ -119,6 +150,7 @@ function draw(){
    for(const d of [-1,1]){const x=p.x+d*e,y=p.y-3;g.beginPath();if(score>80){g.moveTo(x-3,y-3);g.lineTo(x+3,y+3);g.moveTo(x+3,y-3);g.lineTo(x-3,y+3)}else g.arc(x,y,2,0,6.283);g.stroke()}
    g.beginPath();g.arc(p.x,p.y+p.r*.45,p.r*.22,0,6.283);g.stroke()}
  }
+ if(blade){const c=saw();g.fillStyle='#c5ccd5';g.beginPath();for(let i=0;i<32;i++){const a=spin*.4+i*Math.PI/16,r=i%2?c.r:c.r-8;g.lineTo(c.x+Math.cos(a)*r,c.y+Math.sin(a)*r)}g.fill();circle(c.x,c.y,7,'#2c323b')}
  for(const d of drops)circle(d.x,d.y,d.r,'#c3121f');
  for(const b of bombs){circle(b.x,b.y,12,'#0c0d0f');circle(b.x,b.y-14,b.t%10<5?5:2,'#ffb020')}
  for(const f of flashes)circle(f.x,f.y,f.r*(1.2-f.t/20),'rgba(255,180,50,'+Math.min(.8,f.t/10)+')');
@@ -130,14 +162,18 @@ cv.addEventListener('pointerdown',e=>{
  e.preventDefault();try{cv.setPointerCapture(e.pointerId)}catch(_){}
  const m=pos(e);
  if(tool==='gun')shoot(m.x,m.y);
+ else if(tool==='hammer')hammer(m.x,m.y);
  else if(tool==='bomb'){if(bombs.length<5)bombs.push({x:m.x,y:m.y,vy:0,t:60})}
  else{let best=null,bd=60;if(tool==='hand')for(const p of P){const d=Math.hypot(p.x-m.x,p.y-m.y);if(d<bd){bd=d;best=p}}
   grabs.set(e.pointerId,{...m,p:best,trail:tool==='saw'?m:null})}
 });
 cv.addEventListener('pointermove',e=>{const v=grabs.get(e.pointerId);if(!v)return;const m=pos(e);if(v.trail){const a={x:v.x,y:v.y};slash(a,m);v.trail=a}v.x=m.x;v.y=m.y});
 for(const n of ['pointerup','pointercancel'])cv.addEventListener(n,e=>grabs.delete(e.pointerId));
-for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{tool=b.dataset.t;grabs.clear();for(const o of document.querySelectorAll('nav button'))o.setAttribute('aria-pressed',o===b)};
+for(const b of document.querySelectorAll('nav [data-t]'))b.onclick=()=>{tool=b.dataset.t;grabs.clear();for(const o of document.querySelectorAll('nav [data-t]'))o.setAttribute('aria-pressed',o===b)};
 document.getElementById('reset').onclick=reset;
+function toggle(id,fn){const b=document.getElementById(id);b.onclick=()=>b.setAttribute('aria-pressed',fn(b))}
+toggle('spikes',()=>spikes=!spikes);toggle('blade',()=>blade=!blade);toggle('grav',()=>zero=!zero);
+toggle('snd',b=>{mute=!mute;b.textContent=mute?'Звук: выкл':'Звук: вкл';return mute});
 let last=0,acc=0;
 function loop(t){requestAnimationFrame(loop);fit();if(!W||!H)return;acc+=Math.min(50,t-last);last=t;while(acc>=1000/60){step();acc-=1000/60}draw()}
 function fit(){const r=cv.getBoundingClientRect();if(r.width>0&&r.height>0&&(Math.abs(r.width-W)>1||Math.abs(r.height-H)>1)){size();reset()}}
